@@ -1,0 +1,205 @@
+@page "/suppliers"
+@implements IDisposable
+@inject SupplierDataViewModel VM
+
+<PageTitle>Supplier data</PageTitle>
+
+<h1>Supplier data</h1>
+
+@if (VM.IsBusy)
+{
+    <p class="muted">Working…</p>
+}
+
+<div class="two-columns">
+
+    <section class="panel">
+        <h2>Suppliers</h2>
+        @foreach (var supplier in VM.Suppliers)
+        {
+            <div class="supplier">
+                <strong>@supplier.Name</strong> <span class="muted">@supplier.Country</span>
+                <ul>
+                    @foreach (var alternative in supplier.Alternatives)
+                    {
+                        <li>
+                            <button class="link" @onclick="() => VM.LoadAlternativeAsync(alternative.Id)">@alternative.Name</button>
+                        </li>
+                    }
+                </ul>
+                <button class="secondary" @onclick="() => VM.CreateAlternative(supplier.Id)">+ New material alternative</button>
+            </div>
+        }
+    </section>
+
+    <section class="panel">
+        @if (VM.SelectedAlternative is { } alt)
+        {
+            <h2>@(alt.Id == 0 ? "New material alternative" : alt.Name)</h2>
+
+            <div class="inline">
+                <label>Name <input @bind="alt.Name" /></label>
+                <label>Grade <input @bind="alt.Grade" /></label>
+                <label>
+                    Category
+                    <select @bind="alt.MaterialCategoryId">
+                        <option value="0">– choose –</option>
+                        @foreach (var category in VM.Categories)
+                        {
+                            <option value="@category.Id">@category.Name</option>
+                        }
+                    </select>
+                </label>
+            </div>
+
+            <h3>Technical specifications</h3>
+            <table>
+                <thead>
+                    <tr><th>Property</th><th>Value</th><th>Unit</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var spec in alt.Specifications)
+                    {
+                        <tr>
+                            <td><input @bind="spec.Property" /></td>
+                            <td><input type="number" step="any" @bind="spec.Value" /></td>
+                            <td><input @bind="spec.Unit" class="short" /></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <button class="secondary" @onclick="VM.AddSpecification">+ Specification</button>
+
+            <h3>CO₂e data</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>kg CO₂e per unit</th><th>Unit</th><th>System boundary</th>
+                        <th>Source type</th><th>Source reference</th><th>Quality note</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var data in alt.EnvironmentalData)
+                    {
+                        <tr>
+                            <td><input type="number" step="any" @bind="data.EmissionFactor" /></td>
+                            <td><input @bind="data.ReferenceUnit" class="short" /></td>
+                            <td><input @bind="data.SystemBoundary" /></td>
+                            <td>
+                                <select @bind="data.SourceType">
+                                    @foreach (var type in Enum.GetValues<SourceType>())
+                                    {
+                                        <option value="@type">@type</option>
+                                    }
+                                </select>
+                            </td>
+                            <td><input @bind="data.SourceReference" /></td>
+                            <td><input @bind="data.QualityNote" /></td>
+                        </tr>
+                        if (data.Id != 0)
+                        {
+                            <tr>
+                                <td colspan="6" class="docs">
+                                    Documents:
+                                    @(data.Documents.Count == 0
+                                        ? "none"
+                                        : string.Join(", ", data.Documents.Select(d => $"{d.DocumentType} – {d.Title}")))
+                                    <div class="inline">
+                                        <label>
+                                            Type
+                                            <select @bind="uploadType">
+                                                @foreach (var type in Enum.GetValues<DocumentType>())
+                                                {
+                                                    <option value="@type">@type</option>
+                                                }
+                                            </select>
+                                        </label>
+                                        <label>
+                                            Upload document
+                                            <InputFile OnChange="e => UploadAsync(e, data.Id)" />
+                                        </label>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+            <button class="secondary" @onclick="VM.AddEnvironmentalData">+ CO₂e data</button>
+            <p class="muted">Save a new CO₂e row first; then you can upload its EPD, LCA or PCF.</p>
+
+            <h3>Prices</h3>
+            <table>
+                <thead>
+                    <tr><th>Amount</th><th>Currency</th><th>Per unit</th><th>Valid from</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var price in alt.Prices.OrderByDescending(p => p.ValidFrom))
+                    {
+                        if (price.Id == 0)
+                        {
+                            <tr>
+                                <td><input type="number" step="0.01" @bind="price.Amount" /></td>
+                                <td><input @bind="price.Currency" class="short" /></td>
+                                <td><input @bind="price.PriceUnit" class="short" /></td>
+                                <td><input type="date" @bind="price.ValidFrom" /></td>
+                            </tr>
+                        }
+                        else
+                        {
+                            <tr>
+                                <td>@price.Amount.ToString("N2")</td>
+                                <td>@price.Currency</td>
+                                <td>@price.PriceUnit</td>
+                                <td>@price.ValidFrom.ToString("yyyy-MM-dd")</td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+            <button class="secondary" @onclick="VM.AddPrice">+ New price</button>
+            <p class="muted">Saved prices are kept as history. Add a new price instead of changing an old one.</p>
+
+            <div class="actions">
+                <button disabled="@VM.IsBusy" @onclick="VM.SaveAlternativeAsync">Submit information</button>
+            </div>
+        }
+        else
+        {
+            <p class="muted">Select a material alternative on the left, or create a new one.</p>
+        }
+
+        @if (VM.ValidationErrors.Count > 0)
+        {
+            <div class="errors">
+                @foreach (var error in VM.ValidationErrors)
+                {
+                    <p>@error</p>
+                }
+            </div>
+        }
+
+        @if (VM.StatusMessage is not null)
+        {
+            <p class="success">@VM.StatusMessage</p>
+        }
+    </section>
+</div>
+
+@code {
+    private DocumentType uploadType = DocumentType.EPD;
+
+    protected override async Task OnInitializedAsync()
+    {
+        VM.PropertyChanged += OnViewModelChanged;
+        await VM.LoadSuppliersAsync();
+    }
+
+    private Task UploadAsync(InputFileChangeEventArgs e, int environmentalDataId) =>
+        VM.UploadDocumentAsync(environmentalDataId, e.File, uploadType);
+
+    // MVVM: when the ViewModel raises PropertyChanged, the View re-renders
+    private void OnViewModelChanged(object? sender, PropertyChangedEventArgs e) => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => VM.PropertyChanged -= OnViewModelChanged;
+}

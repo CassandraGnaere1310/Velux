@@ -1,0 +1,193 @@
+@page "/comparison"
+@implements IDisposable
+@inject SupplierComparisonViewModel VM
+
+<PageTitle>Compare suppliers</PageTitle>
+
+<h1>Compare supplier alternatives</h1>
+
+<section class="panel">
+    <div class="inline">
+        <label>
+            Material category
+            <select value="@(VM.SelectedCategory?.Id ?? 0)" @onchange="OnCategoryChangedAsync">
+                <option value="0">– choose –</option>
+                @foreach (var category in VM.Categories)
+                {
+                    <option value="@category.Id">@category.Name</option>
+                }
+            </select>
+        </label>
+        @if (VM.SavedComparisons.Count > 0)
+        {
+            <label>
+                Open saved comparison
+                <select value="0" @onchange="OnOpenSavedAsync">
+                    <option value="0">– choose –</option>
+                    @foreach (var saved in VM.SavedComparisons)
+                    {
+                        <option value="@saved.Id">@saved.Name (@saved.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm"))</option>
+                    }
+                </select>
+            </label>
+        }
+    </div>
+
+    @if (VM.SelectedCategory is { } selected && selected.Requirements.Count > 0)
+    {
+        <p class="muted">
+            Technical requirements:
+            @(string.Join("; ", selected.Requirements.Select(r => $"{r.Property} {Symbol(r.ComparisonOperator)} {r.RequiredValue} {r.Unit}")))
+        </p>
+    }
+</section>
+
+@if (VM.SelectedCategory is not null)
+{
+    <section class="panel">
+        <h2>Available alternatives</h2>
+        <div class="inline">
+            <label>Quantity <input type="number" step="any" @bind="quantity" class="short" /></label>
+            <label>Unit <input @bind="unit" class="short" /></label>
+        </div>
+        <table>
+            <thead>
+                <tr><th>Alternative</th><th>Supplier</th><th>CO₂e data</th><th class="number">Latest price</th><th></th></tr>
+            </thead>
+            <tbody>
+                @foreach (var alternative in VM.AvailableAlternatives)
+                {
+                    var data = alternative.EnvironmentalData.OrderBy(d => d.SourceType).FirstOrDefault();
+                    var price = alternative.Prices.OrderByDescending(p => p.ValidFrom).FirstOrDefault();
+                    <tr>
+                        <td>@alternative.Name <span class="muted">@alternative.Grade</span></td>
+                        <td>@(alternative.Supplier?.Name)</td>
+                        <td>@(data is null ? "missing" : $"{data.EmissionFactor} kg/{data.ReferenceUnit} ({data.SourceType})")</td>
+                        <td class="number">@(price is null ? "–" : $"{price.Amount:N2} {price.Currency}/{price.PriceUnit}")</td>
+                        <td><button class="secondary" @onclick="() => VM.AddAlternative(alternative.Id, quantity, unit)">Add</button></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </section>
+
+    <section class="panel">
+        <h2>Comparison</h2>
+        <label>Name <input @bind="VM.CurrentComparison.Name" /></label>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Baseline</th><th>Alternative</th><th>Supplier</th>
+                    <th class="number">Quantity</th>
+                    <th class="number">Total CO₂e (kg)</th><th class="number">Δ CO₂e</th><th class="number">Δ %</th>
+                    <th class="number">Total cost</th><th class="number">Δ cost</th>
+                    <th>Data</th><th>Technical</th><th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var entry in VM.CurrentComparison.Entries)
+                {
+                    <tr class="@(entry.IsBaseline ? "baseline" : "")">
+                        <td><input type="radio" name="baseline" checked="@entry.IsBaseline" @onchange="() => VM.SelectBaseline(entry)" /></td>
+                        <td>@(entry.MaterialAlternative?.Name)</td>
+                        <td>@(entry.MaterialAlternative?.Supplier?.Name)</td>
+                        <td class="number">@entry.Quantity @entry.QuantityUnit</td>
+                        <td class="number">@Format(entry.TotalCO2e)</td>
+                        <td class="number @Trend(entry.CO2eDifference)">@Format(entry.CO2eDifference)</td>
+                        <td class="number @Trend(entry.CO2eDifferencePct)">@(entry.CO2eDifferencePct is double pct ? $"{pct:N1} %" : "–")</td>
+                        <td class="number">@(entry.TotalCost is decimal total ? total.ToString("N0") : "–")</td>
+                        <td class="number @Trend((double?)entry.CostDifference)">@(entry.CostDifference is decimal diff ? diff.ToString("N0") : "–")</td>
+                        <td>
+                            @if (entry.EnvironmentalData is { } used)
+                            {
+                                <span title="@used.QualityNote">@used.SourceType</span>
+                            }
+                        </td>
+                        <td>
+                            @foreach (var assessment in entry.TechnicalAssessments)
+                            {
+                                <span class="status @assessment.Status.ToString().ToLowerInvariant()">@(assessment.TechnicalRequirement?.Property): @assessment.Status</span>
+                            }
+                        </td>
+                        <td><button class="link" @onclick="() => VM.RemoveEntry(entry)">Remove</button></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        @if (VM.CurrentComparison.Entries.Count > 0 && !VM.HasResults)
+        {
+            <p class="muted">Click Calculate to see CO₂e, cost and technical results.</p>
+        }
+
+        <div class="actions">
+            <button disabled="@VM.IsBusy" @onclick="VM.CalculateAsync">Calculate</button>
+            <button class="secondary" disabled="@VM.IsBusy" @onclick="VM.SaveAsync">Save comparison</button>
+        </div>
+        <p class="muted">
+            Negative differences are better than the baseline. Totals are only calculated when the quantity unit matches the unit of the CO₂e data and price.
+        </p>
+    </section>
+}
+
+@if (VM.ValidationErrors.Count > 0)
+{
+    <div class="errors">
+        @foreach (var error in VM.ValidationErrors)
+        {
+            <p>@error</p>
+        }
+    </div>
+}
+
+@if (VM.StatusMessage is not null)
+{
+    <p class="success">@VM.StatusMessage</p>
+}
+
+@code {
+    private double quantity = 1000;
+    private string unit = "kg";
+
+    protected override async Task OnInitializedAsync()
+    {
+        VM.PropertyChanged += OnViewModelChanged;
+        await VM.InitializeAsync();
+    }
+
+    private async Task OnCategoryChangedAsync(ChangeEventArgs e)
+    {
+        if (!int.TryParse(e.Value?.ToString(), out var categoryId)) return;
+        await VM.LoadAlternativesAsync(categoryId);
+
+        // Suggest the unit used by the category's CO₂e data (kg for aluminium, m2 for glass)
+        unit = VM.AvailableAlternatives.SelectMany(a => a.EnvironmentalData).FirstOrDefault()?.ReferenceUnit ?? unit;
+    }
+
+    private async Task OnOpenSavedAsync(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var comparisonId) && comparisonId > 0)
+            await VM.LoadAsync(comparisonId);
+    }
+
+    private static string Format(double? value) => value is double v ? v.ToString("N0") : "–";
+
+    private static string Trend(double? value) => value switch
+    {
+        < 0 => "better",
+        > 0 => "worse",
+        _ => ""
+    };
+
+    private static string Symbol(ComparisonOperator op) => op switch
+    {
+        ComparisonOperator.GreaterOrEqual => "≥",
+        ComparisonOperator.LessOrEqual => "≤",
+        _ => "="
+    };
+
+    private void OnViewModelChanged(object? sender, PropertyChangedEventArgs e) => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => VM.PropertyChanged -= OnViewModelChanged;
+}
